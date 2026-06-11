@@ -152,7 +152,7 @@
         });
       }
 
-  const booking: BookingInput = {
+ const booking: BookingInput = {
   bookingId:        randomUUID(),
   agentId,
   propertyId,
@@ -165,6 +165,10 @@
   passengerName:    passengerName || '',
   roomCount:        Number(roomCount) || 1,
   guestPhone:       guestPhone || '',
+  ipAddress:        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+                    || req.socket.remoteAddress
+                    || null,
+  sessionId:        req.headers['x-session-id'] as string || null,
 };
 
 const pool = await getPool();

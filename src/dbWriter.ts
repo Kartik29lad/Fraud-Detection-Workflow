@@ -73,13 +73,31 @@ export async function persistFraudResult(
     WHERE booking_id = @bookingId
   `);
 
-  // 4b. Update agent status to suspended
+ // 4b. Update agent status
 if (result.actionTaken === 'auto_suspend') {
   await pool.request()
     .input('agentId', sql.UniqueIdentifier, result.agentId)
     .query(`
       UPDATE dbo.agents
       SET status     = 'suspended',
+          updated_at = SYSDATETIMEOFFSET()
+      WHERE source_id = @agentId
+    `);
+} else if (result.actionTaken === 'hold') {
+  await pool.request()
+    .input('agentId', sql.UniqueIdentifier, result.agentId)
+    .query(`
+      UPDATE dbo.agents
+      SET status     = 'identity_verification',
+          updated_at = SYSDATETIMEOFFSET()
+      WHERE source_id = @agentId
+    `);
+} else if (result.actionTaken === 'block') {
+  await pool.request()
+    .input('agentId', sql.UniqueIdentifier, result.agentId)
+    .query(`
+      UPDATE dbo.agents
+      SET status     = 'under_review',
           updated_at = SYSDATETIMEOFFSET()
       WHERE source_id = @agentId
     `);
@@ -127,9 +145,10 @@ if (result.actionTaken === 'auto_suspend') {
 
 function actionToStatus(action: string): string {
   switch (action) {
-    case 'auto_suspend':
-    case 'block':       return 'blocked';
-    case 'flag_review': return 'flagged';
-    default:            return 'confirmed';
+    case 'auto_suspend':  return 'blocked';
+    case 'hold':          return 'held';
+    case 'block':         return 'blocked';
+    case 'flag_review':   return 'flagged';
+    default:              return 'confirmed';
   }
 }

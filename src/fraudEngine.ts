@@ -50,7 +50,7 @@ export async function evaluateBookingFraud(
 
   // ── Step 1: Fetch context + thresholds in parallel ────────
   const [context, thresholds, perms] = await Promise.all([
-    fetchScoringContext(booking.agentId, booking.propertyId, pool, booking.guestEmail, booking.bookingId),
+    fetchScoringContext(booking.agentId, booking.propertyId, pool, booking.guestEmail, booking.bookingId, booking.ipAddress),
     opts?.thresholds       ?? fetchThresholds(pool),
     opts?.permutationRules ?? fetchPermutationRules(pool),
   ]);
@@ -126,6 +126,7 @@ export async function dryRunScore(
       blacklist:   { isBlacklisted: false, reason: null },
       frequentEdits: { amendmentCount: 0, isFrequent: false },
       subAgent: { isSubAgent: false, parentAgentId: null },
+      sessionContext: { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false },
     },
     DEFAULT_THRESHOLDS,
     [],
@@ -212,6 +213,7 @@ async function inlineTest() {
     blacklist:   { isBlacklisted: false, reason: null },
     frequentEdits: { amendmentCount: 0, isFrequent: false },
     subAgent: { isSubAgent: false, parentAgentId: null },
+    sessionContext: { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false },
   });
 
   console.log('\n══════════════════════════════════════════');

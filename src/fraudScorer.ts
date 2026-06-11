@@ -52,6 +52,7 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   group_size_anomaly: 20,
   frequent_edits:     20,
   sub_agent_anomaly:  15,
+  concurrent_sessions: 20,
 
 };
 
@@ -109,6 +110,7 @@ export class FraudScorer {
   ...this.checkGroupSize(booking.roomCount || 1, ctx.baseline.avgRoomsPerBooking || 1.2),
   ...this.checkDataQuality(booking),
   ...this.checkSubAgent(ctx),
+  ...this.checkConcurrentSessions(ctx),
 ];
 
     // ── Step 3: sum individual signal scores ────────────────
@@ -527,6 +529,22 @@ private checkSubAgent(ctx: ScoringContext): FiredSignal[] {
   }
   return [];
 }
+// ── Rule 20: Concurrent Sessions ─────────────────────────
+private checkConcurrentSessions(ctx: ScoringContext): FiredSignal[] {
+  const session = ctx.sessionContext;
+  if (!session.hasConcurrentSessions) return [];
+
+  return [{
+    signalType:   'concurrent_sessions',
+    scoreContrib: SIGNAL_WEIGHTS.concurrent_sessions,
+    reason:       `Agent active from ${session.concurrentSessionCount} different IPs simultaneously (${session.distinctIPs.join(', ')})`,
+    detail: {
+      concurrentSessionCount: session.concurrentSessionCount,
+      distinctIPs:            session.distinctIPs,
+      scoreAdded:             SIGNAL_WEIGHTS.concurrent_sessions,
+    },
+  }];
+}
 
 // ── Rule 35: Fake Passenger Names ────────────────────────
   private checkFakeNames(passengerName: string): FiredSignal[] {
@@ -632,7 +650,7 @@ private checkSubAgent(ctx: ScoringContext): FiredSignal[] {
 
   private toAction(score: number): ActionTaken {
     if (score >= this.t.scoreSuspend) return 'auto_suspend';
-    if (score >= this.t.scoreBlock)   return 'block';
+    if (score >= this.t.scoreBlock)   return 'hold';       // 70–89: hold + identity verification
     if (score >= this.t.scoreReview)  return 'flag_review';
     return 'monitor';
   }
@@ -687,8 +705,8 @@ private checkSubAgent(ctx: ScoringContext): FiredSignal[] {
     switch (action) {
       case 'auto_suspend':
         return `AUTO-SUSPEND agent immediately. Block all pending bookings. Preserve audit log. Escalate to fraud team. Signals: ${sigList}`;
-      case 'block':
-        return `BLOCK this booking. Hold agent account for manual verification. Contact agent directly. Signals: ${sigList}`;
+      case 'hold':
+        return `HOLD booking — do not confirm. Agent held for identity verification. Alert Supervisor + Finance Team. Fraud Team must investigate within 2 hours. Signals: ${sigList}`;
       case 'flag_review':
         return `FLAG for ops review. Do not block yet. Assign to compliance team. Signals: ${sigList}`;
       case 'monitor':

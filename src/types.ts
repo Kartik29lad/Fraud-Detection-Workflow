@@ -19,6 +19,8 @@ export interface BookingInput {
   passengerName?:   string;
   roomCount?:       number;
   guestPhone?:      string;
+  ipAddress?:     string | null;
+  sessionId?:     string | null;
 }
 
 // ── Context: data pulled from DB before scoring ─────────────
@@ -87,6 +89,11 @@ export interface SubAgentContext {
   parentAgentId:   string | null;
 }
 
+export interface SessionContext {
+  concurrentSessionCount: number;   // distinct active IPs right now
+  distinctIPs:            string[]; // for detail logging
+  hasConcurrentSessions:  boolean;
+}
 /** Everything the scorer needs — fetch all 3 before calling score() */
 export interface ScoringContext {
   baseline:    AgentBaseline;
@@ -98,6 +105,7 @@ export interface ScoringContext {
   blacklist:   BlacklistContext;
   frequentEdits: FrequentEditsContext;
   subAgent: SubAgentContext;
+  sessionContext:  SessionContext;
 }
 
 // ── Thresholds: from fraud_thresholds table ─────────────────
@@ -163,7 +171,8 @@ export type SignalType =
   | 'data_quality_low'     
   | 'group_size_anomaly'   
   | 'frequent_edits'       
-  | 'sub_agent_anomaly';
+  | 'sub_agent_anomaly'
+  | 'concurrent_sessions';
 
 // ── Output: what comes back from score() ────────────────────
 

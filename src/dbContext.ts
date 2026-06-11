@@ -4,7 +4,8 @@ import {
   ScoringContext, FraudThresholds, PermutationRule,
   DEFAULT_THRESHOLDS, RiskLevel, SignalType,
   AgentMeta, CancelRatioContext, RepeatGuestContext, BlacklistContext,FrequentEditsContext,
-  SubAgentContext
+ SubAgentContext,
+  SessionContext
 } from './types';
 
 export async function fetchScoringContext(
@@ -13,8 +14,9 @@ export async function fetchScoringContext(
   pool:       sql.ConnectionPool,
   guestEmail?: string | null,
   bookingId?:  string,
+  ipAddress?:  string | null,
 ): Promise<ScoringContext> {
-  const [baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent] = await Promise.all([
+ const [baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent, sessionContext] = await Promise.all([
     fetchBaseline(agentId, pool),
     fetchProperty(propertyId, pool),
     fetchVelocity(agentId, pool),
@@ -24,8 +26,10 @@ export async function fetchScoringContext(
     fetchBlacklist(guestEmail ?? null, pool),
     fetchFrequentEdits(bookingId ?? null, pool),
     fetchSubAgentContext(agentId, pool),
+    fetchSessionContext(agentId, ipAddress, pool),
   ]);
-return { baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent };}
+  return { baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent, sessionContext };
+}
 
 async function fetchBaseline(agentId: string, pool: sql.ConnectionPool): Promise<AgentBaseline> {
   const result = await pool.request()
@@ -234,6 +238,54 @@ async function fetchSubAgentContext(agentId: string, pool: sql.ConnectionPool): 
   return {
     isSubAgent:    row.is_sub_agent === true || row.is_sub_agent === 1,
     parentAgentId: row.parent_agent_id ?? null,
+  };
+}
+
+async function fetchSessionContext(
+  agentId:   string,
+  currentIp: string | null | undefined,
+  pool:      sql.ConnectionPool,
+): Promise<SessionContext> {
+  if (!currentIp) return { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false };
+
+  // Upsert current session — mark agent as active from this IP
+  await pool.request()
+    .input('agentId',   sql.UniqueIdentifier, agentId)
+    .input('ip',        sql.VarChar(45),       currentIp)
+    .query(`
+      IF EXISTS (
+        SELECT 1 FROM dbo.agent_sessions
+        WHERE agent_id   = @agentId
+          AND ip_address = @ip
+          AND is_active  = 1
+      )
+        UPDATE dbo.agent_sessions
+        SET last_seen_at = SYSDATETIMEOFFSET()
+        WHERE agent_id   = @agentId
+          AND ip_address = @ip
+          AND is_active  = 1
+      ELSE
+        INSERT INTO dbo.agent_sessions (agent_id, ip_address, created_at, last_seen_at, is_active)
+        VALUES (@agentId, @ip, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 1)
+    `);
+
+  // Fetch all distinct active IPs for this agent in last 30 minutes
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT DISTINCT ip_address
+      FROM dbo.agent_sessions
+      WHERE agent_id    = @agentId
+        AND is_active   = 1
+        AND last_seen_at >= DATEADD(MINUTE, -30, SYSDATETIMEOFFSET())
+    `);
+
+  const ips: string[] = result.recordset.map((r: any) => r.ip_address);
+
+  return {
+    concurrentSessionCount: ips.length,
+    distinctIPs:            ips,
+    hasConcurrentSessions:  ips.length >= 2,
   };
 }
 
