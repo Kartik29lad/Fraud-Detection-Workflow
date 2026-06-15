@@ -50,7 +50,18 @@ export async function evaluateBookingFraud(
 
   // ── Step 1: Fetch context + thresholds in parallel ────────
   const [context, thresholds, perms] = await Promise.all([
-    fetchScoringContext(booking.agentId, booking.propertyId, pool, booking.guestEmail, booking.bookingId, booking.ipAddress),
+    fetchScoringContext(
+  booking.agentId,
+  booking.propertyId,
+  pool,
+  booking.guestEmail,
+  booking.bookingId,
+  booking.ipAddress,
+  booking.guestNationality,
+  booking.passportNumber,
+  booking.visaNumber,
+  booking.guestPhone,
+),
     opts?.thresholds       ?? fetchThresholds(pool),
     opts?.permutationRules ?? fetchPermutationRules(pool),
   ]);
@@ -127,6 +138,16 @@ export async function dryRunScore(
       frequentEdits: { amendmentCount: 0, isFrequent: false },
       subAgent: { isSubAgent: false, parentAgentId: null },
       sessionContext: { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false },
+      ipReputation:   { isBlacklisted: false, reason: null, source: null },
+accountFarming: { sameIpAgentCount: 0, isFarming: false },
+rapidIpSwitch:  { ipSwitchCount: 0, isRapidSwitching: false },
+failedBookings: { failureCount: 0, isSuspicious: false },
+failedPayments: { failureCount: 0, isSuspicious: false },
+chargebacks:    { chargebackCount: 0, hasChargebacks: false },
+creditLimit:    { creditLimit: null, currentBalance: null, usagePct: null, isAtRisk: false },
+highRiskNat:    { isHighRisk: false, reason: null },
+docRequirement: { requiresDocs: false, requiredDocType: null, hasPassport: false, hasVisa: false, isMissing: false },
+duplicatePassenger: { duplicateCount: 0, isDuplicate: false },
     },
     DEFAULT_THRESHOLDS,
     [],
@@ -214,6 +235,16 @@ async function inlineTest() {
     frequentEdits: { amendmentCount: 0, isFrequent: false },
     subAgent: { isSubAgent: false, parentAgentId: null },
     sessionContext: { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false },
+    ipReputation:   { isBlacklisted: false, reason: null, source: null },
+accountFarming: { sameIpAgentCount: 0, isFarming: false },
+rapidIpSwitch:  { ipSwitchCount: 0, isRapidSwitching: false },
+failedBookings: { failureCount: 0, isSuspicious: false },
+failedPayments: { failureCount: 0, isSuspicious: false },
+chargebacks:    { chargebackCount: 0, hasChargebacks: false },
+creditLimit:    { creditLimit: null, currentBalance: null, usagePct: null, isAtRisk: false },
+highRiskNat:    { isHighRisk: false, reason: null },
+docRequirement: { requiresDocs: false, requiredDocType: null, hasPassport: false, hasVisa: false, isMissing: false },
+duplicatePassenger: { duplicateCount: 0, isDuplicate: false },
   });
 
   console.log('\n══════════════════════════════════════════');

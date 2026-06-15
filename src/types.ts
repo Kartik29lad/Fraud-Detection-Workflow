@@ -21,6 +21,9 @@ export interface BookingInput {
   guestPhone?:      string;
   ipAddress?:     string | null;
   sessionId?:     string | null;
+   passportNumber?:  string | null;
+  visaNumber?:      string | null;
+  docExpiry?:       Date   | null;
 }
 
 // ── Context: data pulled from DB before scoring ─────────────
@@ -94,18 +97,84 @@ export interface SessionContext {
   distinctIPs:            string[]; // for detail logging
   hasConcurrentSessions:  boolean;
 }
+
+export interface HighRiskNatContext {
+  isHighRisk:  boolean;
+  reason:      string | null;
+}
+
+export interface DocRequirementContext {
+  requiresDocs:    boolean;
+  requiredDocType: string | null;
+  hasPassport:     boolean;
+  hasVisa:         boolean;
+  isMissing:       boolean;
+}
+
+export interface DuplicatePassengerContext {
+  duplicateCount:  number;
+  isDuplicate:     boolean;
+}
 /** Everything the scorer needs — fetch all 3 before calling score() */
 export interface ScoringContext {
-  baseline:    AgentBaseline;
-  property:    PropertyContext;
-  velocity:    VelocityContext;
-  agentMeta:   AgentMeta;
-  cancelRatio: CancelRatioContext;
-  repeatGuest: RepeatGuestContext;
-  blacklist:   BlacklistContext;
-  frequentEdits: FrequentEditsContext;
-  subAgent: SubAgentContext;
-  sessionContext:  SessionContext;
+  baseline:             AgentBaseline;
+  property:             PropertyContext;
+  velocity:             VelocityContext;
+  agentMeta:            AgentMeta;
+  cancelRatio:          CancelRatioContext;
+  repeatGuest:          RepeatGuestContext;
+  blacklist:            BlacklistContext;
+  frequentEdits:        FrequentEditsContext;
+  subAgent:             SubAgentContext;
+  sessionContext:       SessionContext;
+  ipReputation:         IpReputationContext;
+  accountFarming:       AccountFarmingContext;
+  rapidIpSwitch:        RapidIpSwitchContext;
+  failedBookings:       FailedBookingContext;
+  failedPayments:       FailedPaymentContext;
+  chargebacks:          ChargebackContext;
+  creditLimit:          CreditLimitContext;
+  highRiskNat:          HighRiskNatContext;
+  docRequirement:       DocRequirementContext;
+  duplicatePassenger: DuplicatePassengerContext;
+}
+
+export interface IpReputationContext {
+  isBlacklisted: boolean;
+  reason:        string | null;
+  source:        string | null;
+}
+
+export interface AccountFarmingContext {
+  sameIpAgentCount: number;
+  isFarming:        boolean;
+}
+
+export interface RapidIpSwitchContext {
+  ipSwitchCount:    number;
+  isRapidSwitching: boolean;
+}
+
+export interface FailedBookingContext {
+  failureCount: number;
+  isSuspicious: boolean;
+}
+
+export interface FailedPaymentContext {
+  failureCount: number;
+  isSuspicious: boolean;
+}
+
+export interface ChargebackContext {
+  chargebackCount: number;
+  hasChargebacks:  boolean;
+}
+
+export interface CreditLimitContext {
+  creditLimit:     number | null;
+  currentBalance:  number | null;
+  usagePct:        number | null;
+  isAtRisk:        boolean;
 }
 
 // ── Thresholds: from fraud_thresholds table ─────────────────
@@ -166,13 +235,23 @@ export type SignalType =
   | 'lead_time_anomaly'
   | 'repeat_guest'
   | 'blacklist_match'
-  | 'fake_name_detected'  
-  | 'disposable_email'     
-  | 'data_quality_low'     
-  | 'group_size_anomaly'   
-  | 'frequent_edits'       
+  | 'fake_name_detected'
+  | 'disposable_email'
+  | 'data_quality_low'
+  | 'group_size_anomaly'
+  | 'frequent_edits'
   | 'sub_agent_anomaly'
-  | 'concurrent_sessions';
+  | 'concurrent_sessions'
+  | 'ip_reputation'
+  | 'account_farming'
+  | 'rapid_ip_switch'
+  | 'failed_booking_attempts'
+  | 'failed_payment_attempts'
+  | 'chargeback_history'
+  | 'credit_limit_risk'
+  | 'high_risk_nationality'
+  | 'doc_requirement_missing'
+  | 'duplicate_passenger'
 
 // ── Output: what comes back from score() ────────────────────
 

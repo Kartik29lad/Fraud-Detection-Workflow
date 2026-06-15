@@ -3,32 +3,66 @@ import {
   AgentBaseline, PropertyContext, VelocityContext,
   ScoringContext, FraudThresholds, PermutationRule,
   DEFAULT_THRESHOLDS, RiskLevel, SignalType,
-  AgentMeta, CancelRatioContext, RepeatGuestContext, BlacklistContext,FrequentEditsContext,
- SubAgentContext,
-  SessionContext
+  AgentMeta, CancelRatioContext, RepeatGuestContext,
+  BlacklistContext, FrequentEditsContext, SubAgentContext,
+  SessionContext,
+  IpReputationContext, AccountFarmingContext, RapidIpSwitchContext,
+  FailedBookingContext, FailedPaymentContext, ChargebackContext,
+  CreditLimitContext, HighRiskNatContext,
+  DocRequirementContext,DuplicatePassengerContext,
 } from './types';
 
 export async function fetchScoringContext(
-  agentId:    string,
-  propertyId: string,
-  pool:       sql.ConnectionPool,
-  guestEmail?: string | null,
-  bookingId?:  string,
-  ipAddress?:  string | null,
+  agentId:         string,
+  propertyId:      string,
+  pool:            sql.ConnectionPool,
+  guestEmail?:     string | null,
+  bookingId?:      string,
+  ipAddress?:      string | null,
+  nationality?:    string,
+  passportNumber?: string | null,
+  visaNumber?:     string | null,
+  guestPhone?:     string | null,
 ): Promise<ScoringContext> {
- const [baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent, sessionContext] = await Promise.all([
-    fetchBaseline(agentId, pool),
-    fetchProperty(propertyId, pool),
-    fetchVelocity(agentId, pool),
-    fetchAgentMeta(agentId, pool),
-    fetchCancelRatio(agentId, pool),
-    fetchRepeatGuest(agentId, guestEmail ?? null, pool),
-    fetchBlacklist(guestEmail ?? null, pool),
-    fetchFrequentEdits(bookingId ?? null, pool),
-    fetchSubAgentContext(agentId, pool),
-    fetchSessionContext(agentId, ipAddress, pool),
-  ]);
-  return { baseline, property, velocity, agentMeta, cancelRatio, repeatGuest, blacklist, frequentEdits, subAgent, sessionContext };
+  // Step A — property first
+const property = await fetchProperty(propertyId, pool);
+
+// Step B — everything else in parallel
+const [
+  baseline, velocity, agentMeta,
+  cancelRatio, repeatGuest, blacklist, frequentEdits,
+  subAgent, sessionContext, ipReputation, accountFarming,
+  rapidIpSwitch, failedBookings, failedPayments,
+  chargebacks, creditLimit, highRiskNat, docRequirement, duplicatePassenger,
+] = await Promise.all([
+  fetchBaseline(agentId, pool),
+  fetchVelocity(agentId, pool),
+  fetchAgentMeta(agentId, pool),
+  fetchCancelRatio(agentId, pool),
+  fetchRepeatGuest(agentId, guestEmail ?? null, pool),
+  fetchBlacklist(guestEmail ?? null, pool),
+  fetchFrequentEdits(bookingId ?? null, pool),
+  fetchSubAgentContext(agentId, pool),
+  fetchSessionContext(agentId, ipAddress, pool),
+  fetchIpReputation(ipAddress, pool),
+  fetchAccountFarming(ipAddress, agentId, pool),
+  fetchRapidIpSwitch(agentId, pool),
+  fetchFailedBookings(agentId, pool),
+  fetchFailedPayments(agentId, pool),
+  fetchChargebacks(agentId, pool),
+  fetchCreditLimit(agentId, pool),
+  fetchHighRiskNat(nationality ?? '', pool),
+  fetchDocRequirement(property.country, passportNumber, visaNumber, pool),
+  fetchDuplicatePassenger(agentId, guestEmail, guestPhone, pool),
+]);
+
+  return {
+    baseline, property, velocity, agentMeta,
+    cancelRatio, repeatGuest, blacklist, frequentEdits,
+    subAgent, sessionContext, ipReputation, accountFarming,
+    rapidIpSwitch, failedBookings, failedPayments,
+    chargebacks, creditLimit, highRiskNat, docRequirement, duplicatePassenger,
+  };
 }
 
 async function fetchBaseline(agentId: string, pool: sql.ConnectionPool): Promise<AgentBaseline> {
@@ -287,6 +321,233 @@ async function fetchSessionContext(
     distinctIPs:            ips,
     hasConcurrentSessions:  ips.length >= 2,
   };
+}
+async function fetchIpReputation(
+  ipAddress: string | null | undefined,
+  pool: sql.ConnectionPool
+): Promise<IpReputationContext> {
+  if (!ipAddress) return { isBlacklisted: false, reason: null, source: null };
+
+  const result = await pool.request()
+    .input('ip', sql.VarChar(45), ipAddress)
+    .query(`
+      SELECT TOP 1 reason, source FROM dbo.ip_blacklist
+      WHERE ip_address = @ip AND is_active = 1
+    `);
+
+  if (result.recordset.length === 0) return { isBlacklisted: false, reason: null, source: null };
+  return {
+    isBlacklisted: true,
+    reason:        result.recordset[0].reason,
+    source:        result.recordset[0].source,
+  };
+}
+
+async function fetchAccountFarming(
+  ipAddress: string | null | undefined,
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<AccountFarmingContext> {
+  if (!ipAddress) return { sameIpAgentCount: 0, isFarming: false };
+
+  const result = await pool.request()
+    .input('ip',      sql.VarChar(45),       ipAddress)
+    .input('agentId', sql.UniqueIdentifier,  agentId)
+    .query(`
+      SELECT COUNT(DISTINCT agent_id) AS agent_count
+      FROM dbo.agent_sessions
+      WHERE ip_address = @ip
+        AND agent_id  != @agentId
+        AND is_active  = 1
+        AND last_seen_at >= DATEADD(HOUR, -24, SYSDATETIMEOFFSET())
+    `);
+
+  const count = result.recordset[0]?.agent_count ?? 0;
+  return { sameIpAgentCount: count, isFarming: count >= 2 };
+}
+
+async function fetchRapidIpSwitch(
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<RapidIpSwitchContext> {
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT COUNT(DISTINCT ip_address) AS ip_count
+      FROM dbo.agent_sessions
+      WHERE agent_id    = @agentId
+        AND last_seen_at >= DATEADD(MINUTE, -10, SYSDATETIMEOFFSET())
+    `);
+
+  const count = result.recordset[0]?.ip_count ?? 0;
+  return { ipSwitchCount: count, isRapidSwitching: count >= 3 };
+}
+
+async function fetchFailedBookings(
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<FailedBookingContext> {
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT COUNT(*) AS failure_count
+      FROM dbo.booking_failures
+      WHERE agent_id  = @agentId
+        AND failed_at >= DATEADD(HOUR, -1, SYSDATETIMEOFFSET())
+    `);
+
+  const count = result.recordset[0]?.failure_count ?? 0;
+  return { failureCount: count, isSuspicious: count >= 3 };
+}
+
+async function fetchFailedPayments(
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<FailedPaymentContext> {
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT COUNT(*) AS failure_count
+      FROM dbo.payment_failures
+      WHERE agent_id  = @agentId
+        AND failed_at >= DATEADD(HOUR, -1, SYSDATETIMEOFFSET())
+    `);
+
+  const count = result.recordset[0]?.failure_count ?? 0;
+  return { failureCount: count, isSuspicious: count >= 3 };
+}
+
+async function fetchChargebacks(
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<ChargebackContext> {
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT COUNT(*) AS chargeback_count
+      FROM dbo.chargebacks
+      WHERE agent_id = @agentId
+        AND status   = 'open'
+    `);
+
+  const count = result.recordset[0]?.chargeback_count ?? 0;
+  return { chargebackCount: count, hasChargebacks: count >= 1 };
+}
+
+async function fetchCreditLimit(
+  agentId: string,
+  pool: sql.ConnectionPool
+): Promise<CreditLimitContext> {
+  const result = await pool.request()
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .query(`
+      SELECT credit_limit, current_balance, credit_warning_pct
+      FROM dbo.agents
+      WHERE source_id = @agentId
+    `);
+
+  const row = result.recordset[0];
+  if (!row || row.credit_limit == null) {
+    return { creditLimit: null, currentBalance: null, usagePct: null, isAtRisk: false };
+  }
+
+  const usagePct = (row.current_balance / row.credit_limit) * 100;
+  return {
+    creditLimit:    row.credit_limit,
+    currentBalance: row.current_balance,
+    usagePct:       Math.round(usagePct),
+    isAtRisk:       usagePct >= (row.credit_warning_pct ?? 80),
+  };
+}
+async function fetchHighRiskNat(
+  nationality: string,
+  pool: sql.ConnectionPool
+): Promise<HighRiskNatContext> {
+  const result = await pool.request()
+    .input('nat', sql.Char(2), nationality.toUpperCase())
+    .query(`
+      SELECT TOP 1 risk_reason FROM dbo.high_risk_nationalities
+      WHERE nationality = @nat
+        AND is_active   = 1
+    `);
+
+  if (result.recordset.length === 0) return { isHighRisk: false, reason: null };
+  return {
+    isHighRisk: true,
+    reason:     result.recordset[0].risk_reason,
+  };
+}
+
+async function fetchDocRequirement(
+  propertyCountry: string,
+  passportNumber:  string | null | undefined,
+  visaNumber:      string | null | undefined,
+  pool: sql.ConnectionPool
+): Promise<DocRequirementContext> {
+  const result = await pool.request()
+    .input('country', sql.Char(2), propertyCountry.toUpperCase())
+    .query(`
+      SELECT TOP 1 required_doc FROM dbo.destination_document_rules
+      WHERE country_code = @country
+        AND is_active    = 1
+    `);
+
+  if (result.recordset.length === 0) {
+    return {
+      requiresDocs:    false,
+      requiredDocType: null,
+      hasPassport:     !!passportNumber,
+      hasVisa:         !!visaNumber,
+      isMissing:       false,
+    };
+  }
+
+  const requiredDoc = result.recordset[0].required_doc as string;
+  const hasPassport = !!passportNumber;
+  const hasVisa     = !!visaNumber;
+
+  let isMissing = false;
+  if (requiredDoc === 'passport') isMissing = !hasPassport;
+  if (requiredDoc === 'visa')     isMissing = !hasVisa;
+  if (requiredDoc === 'both')     isMissing = !hasPassport || !hasVisa;
+
+  return {
+    requiresDocs:    true,
+    requiredDocType: requiredDoc,
+    hasPassport,
+    hasVisa,
+    isMissing,
+  };
+}
+
+async function fetchDuplicatePassenger(
+  agentId:    string,
+  guestEmail: string | null | undefined,
+  guestPhone: string | null | undefined,
+  pool:       sql.ConnectionPool
+): Promise<DuplicatePassengerContext> {
+  if (!guestEmail && !guestPhone) {
+    return { duplicateCount: 0, isDuplicate: false };
+  }
+
+  const result = await pool.request()
+    .input('agentId',    sql.UniqueIdentifier, agentId)
+    .input('guestEmail', sql.NVarChar(150),    guestEmail ?? null)
+    .input('guestPhone', sql.NVarChar(50),     guestPhone ?? null)
+    .query(`
+      SELECT COUNT(DISTINCT agent_id) AS duplicate_count
+      FROM dbo.bookings
+      WHERE agent_id != @agentId
+        AND (
+          (@guestEmail IS NOT NULL AND guest_email = @guestEmail)
+          OR
+          (@guestPhone IS NOT NULL AND guest_phone = @guestPhone)
+        )
+        AND status NOT IN ('cancelled')
+    `);
+
+  const count = result.recordset[0]?.duplicate_count ?? 0;
+  return { duplicateCount: count, isDuplicate: count >= 2 };
 }
 
 function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {

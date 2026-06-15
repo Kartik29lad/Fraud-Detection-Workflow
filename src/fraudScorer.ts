@@ -53,6 +53,16 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   frequent_edits:     20,
   sub_agent_anomaly:  15,
   concurrent_sessions: 20,
+  ip_reputation:            35,
+account_farming:          25,
+rapid_ip_switch:          30,
+failed_booking_attempts:  25,
+failed_payment_attempts:  30,
+chargeback_history:       25,
+credit_limit_risk:        30,
+high_risk_nationality:   15,
+doc_requirement_missing: 20,
+duplicate_passenger: 25,
 
 };
 
@@ -111,6 +121,16 @@ export class FraudScorer {
   ...this.checkDataQuality(booking),
   ...this.checkSubAgent(ctx),
   ...this.checkConcurrentSessions(ctx),
+  ...this.checkIpReputation(ctx),
+...this.checkAccountFarming(ctx),
+...this.checkRapidIpSwitch(ctx),
+...this.checkFailedBookings(ctx),
+...this.checkFailedPayments(ctx),
+...this.checkChargebacks(ctx),
+...this.checkCreditLimit(ctx),
+...this.checkHighRiskNat(booking, ctx),
+...this.checkDocRequirement(ctx),
+...this.checkDuplicatePassenger(ctx),
 ];
 
     // ── Step 3: sum individual signal scores ────────────────
@@ -542,6 +562,177 @@ private checkConcurrentSessions(ctx: ScoringContext): FiredSignal[] {
       concurrentSessionCount: session.concurrentSessionCount,
       distinctIPs:            session.distinctIPs,
       scoreAdded:             SIGNAL_WEIGHTS.concurrent_sessions,
+    },
+  }];
+}
+// ── Rule 28: IP Reputation ────────────────────────────────
+private checkIpReputation(ctx: ScoringContext): FiredSignal[] {
+  const ip = ctx.ipReputation;
+  if (!ip.isBlacklisted) return [];
+
+  return [{
+    signalType:   'ip_reputation',
+    scoreContrib: SIGNAL_WEIGHTS.ip_reputation,
+    reason:       `IP address is blacklisted — Source: ${ip.source ?? 'unknown'}, Reason: ${ip.reason ?? 'unknown'}`,
+    detail: {
+      isBlacklisted: ip.isBlacklisted,
+      reason:        ip.reason,
+      source:        ip.source,
+      scoreAdded:    SIGNAL_WEIGHTS.ip_reputation,
+    },
+  }];
+}
+
+// ── Rule 30: Account Farming (same IP multi-agent) ────────
+private checkAccountFarming(ctx: ScoringContext): FiredSignal[] {
+  const af = ctx.accountFarming;
+  if (!af.isFarming) return [];
+
+  return [{
+    signalType:   'account_farming',
+    scoreContrib: SIGNAL_WEIGHTS.account_farming,
+    reason:       `${af.sameIpAgentCount} other agents active from same IP in last 24h — possible account farming`,
+    detail: {
+      sameIpAgentCount: af.sameIpAgentCount,
+      scoreAdded:       SIGNAL_WEIGHTS.account_farming,
+    },
+  }];
+}
+
+// ── Rule 31: Rapid IP Switching ───────────────────────────
+private checkRapidIpSwitch(ctx: ScoringContext): FiredSignal[] {
+  const rs = ctx.rapidIpSwitch;
+  if (!rs.isRapidSwitching) return [];
+
+  return [{
+    signalType:   'rapid_ip_switch',
+    scoreContrib: SIGNAL_WEIGHTS.rapid_ip_switch,
+    reason:       `Agent switched across ${rs.ipSwitchCount} IPs in last 10 minutes — possible proxy rotation`,
+    detail: {
+      ipSwitchCount: rs.ipSwitchCount,
+      scoreAdded:    SIGNAL_WEIGHTS.rapid_ip_switch,
+    },
+  }];
+}
+
+// ── Rule 14: Failed Booking Attempts ─────────────────────
+private checkFailedBookings(ctx: ScoringContext): FiredSignal[] {
+  const fb = ctx.failedBookings;
+  if (!fb.isSuspicious) return [];
+
+  return [{
+    signalType:   'failed_booking_attempts',
+    scoreContrib: SIGNAL_WEIGHTS.failed_booking_attempts,
+    reason:       `${fb.failureCount} failed booking attempts in last 1 hour — possible brute forcing`,
+    detail: {
+      failureCount: fb.failureCount,
+      threshold:    3,
+      scoreAdded:   SIGNAL_WEIGHTS.failed_booking_attempts,
+    },
+  }];
+}
+
+// ── Rule 51: Failed Payment Attempts ─────────────────────
+private checkFailedPayments(ctx: ScoringContext): FiredSignal[] {
+  const fp = ctx.failedPayments;
+  if (!fp.isSuspicious) return [];
+
+  return [{
+    signalType:   'failed_payment_attempts',
+    scoreContrib: SIGNAL_WEIGHTS.failed_payment_attempts,
+    reason:       `${fp.failureCount} failed payment attempts in last 1 hour — possible card testing`,
+    detail: {
+      failureCount: fp.failureCount,
+      threshold:    3,
+      scoreAdded:   SIGNAL_WEIGHTS.failed_payment_attempts,
+    },
+  }];
+}
+
+// ── Rule 53: Chargeback History ───────────────────────────
+private checkChargebacks(ctx: ScoringContext): FiredSignal[] {
+  const cb = ctx.chargebacks;
+  if (!cb.hasChargebacks) return [];
+
+  return [{
+    signalType:   'chargeback_history',
+    scoreContrib: SIGNAL_WEIGHTS.chargeback_history,
+    reason:       `Agent has ${cb.chargebackCount} open chargeback(s) on record`,
+    detail: {
+      chargebackCount: cb.chargebackCount,
+      scoreAdded:      SIGNAL_WEIGHTS.chargeback_history,
+    },
+  }];
+}
+
+// ── Rule 47: High-Risk Nationality ───────────────────────
+private checkHighRiskNat(
+  booking: BookingInput,
+  ctx: ScoringContext
+): FiredSignal[] {
+  const hr = ctx.highRiskNat;
+  if (!hr.isHighRisk) return [];
+
+  return [{
+    signalType:   'high_risk_nationality',
+    scoreContrib: SIGNAL_WEIGHTS.high_risk_nationality,
+    reason:       `Guest nationality "${booking.guestNationality.toUpperCase()}" is high-risk — ${hr.reason ?? 'flagged in system'}`,
+    detail: {
+      nationality: booking.guestNationality,
+      reason:      hr.reason,
+      scoreAdded:  SIGNAL_WEIGHTS.high_risk_nationality,
+    },
+  }];
+}
+
+// ── Rule 49: Document Requirement Missing ─────────────────
+private checkDocRequirement(ctx: ScoringContext): FiredSignal[] {
+  const doc = ctx.docRequirement;
+  if (!doc.requiresDocs || !doc.isMissing) return [];
+
+  return [{
+    signalType:   'doc_requirement_missing',
+    scoreContrib: SIGNAL_WEIGHTS.doc_requirement_missing,
+    reason:       `Destination requires "${doc.requiredDocType}" — passport: ${doc.hasPassport ? '✅' : '❌'}, visa: ${doc.hasVisa ? '✅' : '❌'}`,
+    detail: {
+      requiredDocType: doc.requiredDocType,
+      hasPassport:     doc.hasPassport,
+      hasVisa:         doc.hasVisa,
+      scoreAdded:      SIGNAL_WEIGHTS.doc_requirement_missing,
+    },
+  }];
+}
+
+// ── Rule 43: Duplicate Passenger Cross-Agent ──────────────
+private checkDuplicatePassenger(ctx: ScoringContext): FiredSignal[] {
+  const dp = ctx.duplicatePassenger;
+  if (!dp.isDuplicate) return [];
+
+  return [{
+    signalType:   'duplicate_passenger',
+    scoreContrib: SIGNAL_WEIGHTS.duplicate_passenger,
+    reason:       `Guest email/phone used across ${dp.duplicateCount} other agents — possible cluster fraud`,
+    detail: {
+      duplicateCount: dp.duplicateCount,
+      scoreAdded:     SIGNAL_WEIGHTS.duplicate_passenger,
+    },
+  }];
+}
+
+// ── Rule 54: Credit Limit Risk ────────────────────────────
+private checkCreditLimit(ctx: ScoringContext): FiredSignal[] {
+  const cl = ctx.creditLimit;
+  if (!cl.isAtRisk || cl.usagePct == null) return [];
+
+  return [{
+    signalType:   'credit_limit_risk',
+    scoreContrib: SIGNAL_WEIGHTS.credit_limit_risk,
+    reason:       `Agent credit usage at ${cl.usagePct}% — limit $${cl.creditLimit}, balance $${cl.currentBalance}`,
+    detail: {
+      creditLimit:    cl.creditLimit,
+      currentBalance: cl.currentBalance,
+      usagePct:       cl.usagePct,
+      scoreAdded:     SIGNAL_WEIGHTS.credit_limit_risk,
     },
   }];
 }
