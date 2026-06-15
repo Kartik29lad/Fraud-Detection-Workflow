@@ -36,11 +36,11 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   new_nationality:     15,
   high_amount:         20,
   property_cap_breach: 20,
-  velocity_spike:      20,
+  velocity_spike:      25,
   off_hours:           15,
   low_star_mismatch:   15,
   new_geo:             10,
-  new_agent:           20,
+  new_agent:           25,
   cancel_ratio:        15,
   account_change:      15,
   lead_time_anomaly:   10,
@@ -51,9 +51,9 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   data_quality_low:   15,
   group_size_anomaly: 20,
   frequent_edits:     20,
-  sub_agent_anomaly:  15,
+  sub_agent_anomaly:  20,
   concurrent_sessions: 20,
-  ip_reputation:            35,
+  ip_reputation:            30,
 account_farming:          25,
 rapid_ip_switch:          30,
 failed_booking_attempts:  25,
@@ -427,7 +427,7 @@ private checkNewAgent(ctx: ScoringContext, totalAmount: number): FiredSignal[] {
   if (ctx.agentMeta.isNewAgent && totalAmount > 1000) {
     return [{
       signalType:   'new_agent',
-      scoreContrib: 20,
+      scoreContrib: 25,
       reason:       `New agent (${ctx.agentMeta.daysSinceCreated} days old) booking high value $${totalAmount.toLocaleString()}`,
       detail:       { daysSinceCreated: ctx.agentMeta.daysSinceCreated, totalAmount },
     }];
@@ -451,7 +451,7 @@ private checkCancelRatio(ctx: ScoringContext): FiredSignal[] {
 
 // ── 18. ACCOUNT CHANGE ───────────────────────────────────
 private checkAccountChange(ctx: ScoringContext): FiredSignal[] {
-  if (ctx.agentMeta.daysSinceUpdated <= 7) {
+  if (ctx.agentMeta.daysSinceUpdated <= 0) {
     return [{
       signalType:   'account_change',
       scoreContrib: 15,
@@ -782,7 +782,7 @@ private checkCreditLimit(ctx: ScoringContext): FiredSignal[] {
 
   // ── Rule 44: Data Quality (Missing Fields) ────────────────
   private checkDataQuality(booking: any): FiredSignal[] {
-    if (!booking.guestPhone || booking.guestPhone.includes('12345') || booking.guestPhone.length < 5) {
+    if (!booking.guestPhone || booking.guestPhone.length < 5) {
       return [{
         signalType: 'data_quality_low',
         scoreContrib: SIGNAL_WEIGHTS.data_quality_low,

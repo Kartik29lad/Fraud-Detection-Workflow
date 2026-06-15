@@ -363,7 +363,7 @@ async function fetchAccountFarming(
     `);
 
   const count = result.recordset[0]?.agent_count ?? 0;
-  return { sameIpAgentCount: count, isFarming: count >= 2 };
+  return { sameIpAgentCount: count, isFarming: count >= 5 };
 }
 
 async function fetchRapidIpSwitch(

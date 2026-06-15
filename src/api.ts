@@ -11,6 +11,7 @@
 
   import { requireApiKey, validateDecision, generateExpiryToken, verifyExpiryToken, validateBookingSource, generateOTP } from './middleware';
   const app = express();
+  app.set('trust proxy', 1);
   app.use(cors({
     origin: 'http://localhost:3001',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -213,30 +214,31 @@ const pool = await getPool();
 
   // Insert booking into DB first
   await pool.request()
-    .input('bookingId',        sql.UniqueIdentifier, booking.bookingId)
-    .input('agentId',          sql.UniqueIdentifier, booking.agentId)
-    .input('propertyId',       sql.UniqueIdentifier, booking.propertyId)
-    .input('guestNationality', sql.Char(2),          booking.guestNationality)
-    .input('checkIn',          sql.Date,             booking.checkIn)
-    .input('checkOut',         sql.Date,             booking.checkOut)
-    .input('amountPerNight',   sql.Decimal(10,2),    booking.amountPerNight)
-    .input('bookedAt',         sql.DateTimeOffset,   booking.bookedAt)
-    .input('guestEmail',       sql.NVarChar(150),    booking.guestEmail)
-    .input('passportNumber',   sql.NVarChar(50),     booking.passportNumber)
-    .input('visaNumber',       sql.NVarChar(50),     booking.visaNumber)
-    .input('docExpiry',        sql.Date,             booking.docExpiry)
-    .query(`
-      INSERT INTO dbo.bookings
-        (booking_id, agent_id, property_id, guest_nationality,
-         check_in, check_out, amount_per_night, booked_at,
-         status, risk_score, guest_email,
-         passport_number, visa_number, doc_expiry)
-      VALUES
-        (@bookingId, @agentId, @propertyId, @guestNationality,
-         @checkIn, @checkOut, @amountPerNight, @bookedAt,
-         'pending', 0, @guestEmail,
-         @passportNumber, @visaNumber, @docExpiry)
-    `);
+  .input('bookingId',        sql.UniqueIdentifier, booking.bookingId)
+  .input('agentId',          sql.UniqueIdentifier, booking.agentId)
+  .input('propertyId',       sql.UniqueIdentifier, booking.propertyId)
+  .input('guestNationality', sql.Char(2),          booking.guestNationality)
+  .input('checkIn',          sql.Date,             booking.checkIn)
+  .input('checkOut',         sql.Date,             booking.checkOut)
+  .input('amountPerNight',   sql.Decimal(10,2),    booking.amountPerNight)
+  .input('bookedAt',         sql.DateTimeOffset,   booking.bookedAt)
+  .input('guestEmail',       sql.NVarChar(150),    booking.guestEmail)
+  .input('passportNumber',   sql.NVarChar(50),     booking.passportNumber)
+  .input('visaNumber',       sql.NVarChar(50),     booking.visaNumber)
+  .input('docExpiry',        sql.Date,             booking.docExpiry)
+  .input('guestPhone',       sql.NVarChar(50),     booking.guestPhone)  // ← add
+  .query(`
+    INSERT INTO dbo.bookings
+      (booking_id, agent_id, property_id, guest_nationality,
+       check_in, check_out, amount_per_night, booked_at,
+       status, risk_score, guest_email,
+       passport_number, visa_number, doc_expiry, guest_phone)
+    VALUES
+      (@bookingId, @agentId, @propertyId, @guestNationality,
+       @checkIn, @checkOut, @amountPerNight, @bookedAt,
+       'pending', 0, @guestEmail,
+       @passportNumber, @visaNumber, @docExpiry, @guestPhone)
+  `);
 
   // Now score it
   const result = await evaluateBookingFraud(booking, pool, {
@@ -246,16 +248,25 @@ const pool = await getPool();
       // Send to n8n webhook
       try {
         const http = require("http");
+
+        // Generate manager action token
+        const expiresAt  = Date.now() + 1800000; // 30 min
+        const linkToken  = generateExpiryToken(result.bookingId, expiresAt);
+
         const postData = JSON.stringify({
-          bookingId: result.bookingId,
-          score: result.totalScore,
-          riskLevel: result.riskLevel,
-          action: result.actionTaken,
-          nights: result.nights,
-          totalAmount: result.totalAmount,
-          primaryReason: result.primaryReason,
+          bookingId:      result.bookingId,
+          agentId:        result.agentId,
+          score:          result.totalScore,
+          riskLevel:      result.riskLevel,
+          action:         result.actionTaken,
+          nights:         result.nights,
+          totalAmount:    result.totalAmount,
+          primaryReason:  result.primaryReason,
           recommendation: result.recommendation,
-          signalsFired: result.firedSignals.length,
+          signalsFired:   result.firedSignals.length,
+          review_id:      result.bookingId,
+          link_token:     linkToken,
+          link_expires:   expiresAt,
         });
 
         const options = {

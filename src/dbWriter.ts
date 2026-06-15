@@ -145,10 +145,10 @@ if (result.actionTaken === 'auto_suspend') {
 
 function actionToStatus(action: string): string {
   switch (action) {
-    case 'auto_suspend':  return 'blocked';
-    case 'hold':          return 'held';
-    case 'block':         return 'blocked';
-    case 'flag_review':   return 'flagged';
+    case 'auto_suspend':  return 'blocked';  // 90+ → blocked immediately
+    case 'hold':          return 'flagged';  // 70-89 → flagged, wait for manager
+    case 'block':         return 'flagged';  // 70-89 → flagged, wait for manager
+    case 'flag_review':   return 'flagged';  // 40-69 → flagged, wait for manager
     default:              return 'confirmed';
   }
 }
