@@ -1,5 +1,5 @@
 import * as sql from 'mssql';
-import { FraudReviewResult } from './types';
+import { FraudReviewResult } from '../types';
 
 export async function persistFraudResult(
   result:   FraudReviewResult,
@@ -24,7 +24,6 @@ export async function persistFraudResult(
 
   // 2. Insert fraud signals
   for (const signal of result.firedSignals) {
-    console.log('INSERTING SIGNAL:', signal.signalType);
     await pool.request()
       .input('bookingId',    sql.UniqueIdentifier,  result.bookingId)
       .input('agentId',      sql.UniqueIdentifier,  result.agentId)
@@ -60,50 +59,50 @@ export async function persistFraudResult(
   }
 
   // 3b. Link review back to booking
- await pool.request()
-  .input('score',     sql.Int,              result.totalScore)
-  .input('status',    sql.VarChar(20),      bookingStatus)
-  .input('reviewId',  sql.UniqueIdentifier, shouldReview ? reviewId : null)
-  .input('bookingId', sql.UniqueIdentifier, result.bookingId)
-  .query(`
-    UPDATE dbo.bookings
-    SET risk_score      = @score,
-        status          = @status,
-        fraud_review_id = @reviewId
-    WHERE booking_id = @bookingId
-  `);
+  await pool.request()
+    .input('score',     sql.Int,              result.totalScore)
+    .input('status',    sql.VarChar(20),      bookingStatus)
+    .input('reviewId',  sql.UniqueIdentifier, shouldReview ? reviewId : null)
+    .input('bookingId', sql.UniqueIdentifier, result.bookingId)
+    .query(`
+      UPDATE dbo.bookings
+      SET risk_score      = @score,
+          status          = @status,
+          fraud_review_id = @reviewId
+      WHERE booking_id = @bookingId
+    `);
 
- // 4b. Update agent status
-if (result.actionTaken === 'auto_suspend') {
-  await pool.request()
-    .input('agentId', sql.UniqueIdentifier, result.agentId)
-    .query(`
-      UPDATE dbo.agents
-      SET status     = 'suspended',
-          updated_at = SYSDATETIMEOFFSET()
-      WHERE source_id = @agentId
-    `);
-} else if (result.actionTaken === 'hold') {
-  await pool.request()
-    .input('agentId', sql.UniqueIdentifier, result.agentId)
-    .query(`
-      UPDATE dbo.agents
-      SET status     = 'identity_verification',
-          updated_at = SYSDATETIMEOFFSET()
-      WHERE source_id = @agentId
-    `);
-} else if (result.actionTaken === 'block') {
-  await pool.request()
-    .input('agentId', sql.UniqueIdentifier, result.agentId)
-    .query(`
-      UPDATE dbo.agents
-      SET status     = 'under_review',
-          updated_at = SYSDATETIMEOFFSET()
-      WHERE source_id = @agentId
-    `);
-}
+  // 4. Update agent status
+  if (result.actionTaken === 'auto_suspend') {
+    await pool.request()
+      .input('agentId', sql.UniqueIdentifier, result.agentId)
+      .query(`
+        UPDATE dbo.agents
+        SET status     = 'suspended',
+            updated_at = SYSDATETIMEOFFSET()
+        WHERE source_id = @agentId
+      `);
+  } else if (result.actionTaken === 'hold') {
+    await pool.request()
+      .input('agentId', sql.UniqueIdentifier, result.agentId)
+      .query(`
+        UPDATE dbo.agents
+        SET status     = 'identity_verification',
+            updated_at = SYSDATETIMEOFFSET()
+        WHERE source_id = @agentId
+      `);
+  } else if (result.actionTaken === 'block') {
+    await pool.request()
+      .input('agentId', sql.UniqueIdentifier, result.agentId)
+      .query(`
+        UPDATE dbo.agents
+        SET status     = 'under_review',
+            updated_at = SYSDATETIMEOFFSET()
+        WHERE source_id = @agentId
+      `);
+  }
 
-  // 4. Insert suspension log
+  // 5. Insert suspension log
   if (result.actionTaken === 'auto_suspend') {
     await pool.request()
       .input('agentId',   sql.UniqueIdentifier, result.agentId)
@@ -123,7 +122,7 @@ if (result.actionTaken === 'auto_suspend') {
       `);
   }
 
-  // 5. Audit log
+  // 6. Audit log
   await pool.request()
     .input('bookingId', sql.UniqueIdentifier,  result.bookingId)
     .input('action',    sql.VarChar(50),       `fraud_scored_${result.actionTaken}`)
@@ -145,10 +144,10 @@ if (result.actionTaken === 'auto_suspend') {
 
 function actionToStatus(action: string): string {
   switch (action) {
-    case 'auto_suspend':  return 'blocked';  // 90+ → blocked immediately
-    case 'hold':          return 'flagged';  // 70-89 → flagged, wait for manager
-    case 'block':         return 'flagged';  // 70-89 → flagged, wait for manager
-    case 'flag_review':   return 'flagged';  // 40-69 → flagged, wait for manager
-    default:              return 'confirmed';
+    case 'auto_suspend': return 'blocked';
+    case 'hold':         return 'flagged';
+    case 'block':        return 'flagged';
+    case 'flag_review':  return 'flagged';
+    default:             return 'confirmed';
   }
 }

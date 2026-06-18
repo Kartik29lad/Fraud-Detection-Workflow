@@ -39,7 +39,7 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction) {
 
 // Whitelist check for manager decision
 export function validateDecision(decision: string): boolean {
-  const allowed = ['approve_block', 'false_positive'];
+  const allowed = ['approve_block', 'false_positive', 'reinstate'];
   return allowed.includes(decision);
 }
 

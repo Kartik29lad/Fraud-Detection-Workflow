@@ -1,16 +1,13 @@
 import * as sql from 'mssql';
 import {
   AgentBaseline, PropertyContext, VelocityContext,
-  ScoringContext, FraudThresholds, PermutationRule,
-  DEFAULT_THRESHOLDS, RiskLevel, SignalType,
-  AgentMeta, CancelRatioContext, RepeatGuestContext,
-  BlacklistContext, FrequentEditsContext, SubAgentContext,
-  SessionContext,
-  IpReputationContext, AccountFarmingContext, RapidIpSwitchContext,
-  FailedBookingContext, FailedPaymentContext, ChargebackContext,
-  CreditLimitContext, HighRiskNatContext,
-  DocRequirementContext,DuplicatePassengerContext,
-} from './types';
+  ScoringContext, AgentMeta, CancelRatioContext,
+  RepeatGuestContext, BlacklistContext, FrequentEditsContext,
+  SubAgentContext, SessionContext, IpReputationContext,
+  AccountFarmingContext, RapidIpSwitchContext, FailedBookingContext,
+  FailedPaymentContext, ChargebackContext, CreditLimitContext,
+  HighRiskNatContext, DocRequirementContext, DuplicatePassengerContext,
+} from '../types';
 
 export async function fetchScoringContext(
   agentId:         string,
@@ -24,37 +21,35 @@ export async function fetchScoringContext(
   visaNumber?:     string | null,
   guestPhone?:     string | null,
 ): Promise<ScoringContext> {
-  // Step A — property first
-const property = await fetchProperty(propertyId, pool);
+  const property = await fetchProperty(propertyId, pool);
 
-// Step B — everything else in parallel
-const [
-  baseline, velocity, agentMeta,
-  cancelRatio, repeatGuest, blacklist, frequentEdits,
-  subAgent, sessionContext, ipReputation, accountFarming,
-  rapidIpSwitch, failedBookings, failedPayments,
-  chargebacks, creditLimit, highRiskNat, docRequirement, duplicatePassenger,
-] = await Promise.all([
-  fetchBaseline(agentId, pool),
-  fetchVelocity(agentId, pool),
-  fetchAgentMeta(agentId, pool),
-  fetchCancelRatio(agentId, pool),
-  fetchRepeatGuest(agentId, guestEmail ?? null, pool),
-  fetchBlacklist(guestEmail ?? null, pool),
-  fetchFrequentEdits(bookingId ?? null, pool),
-  fetchSubAgentContext(agentId, pool),
-  fetchSessionContext(agentId, ipAddress, pool),
-  fetchIpReputation(ipAddress, pool),
-  fetchAccountFarming(ipAddress, agentId, pool),
-  fetchRapidIpSwitch(agentId, pool),
-  fetchFailedBookings(agentId, pool),
-  fetchFailedPayments(agentId, pool),
-  fetchChargebacks(agentId, pool),
-  fetchCreditLimit(agentId, pool),
-  fetchHighRiskNat(nationality ?? '', pool),
-  fetchDocRequirement(property.country, passportNumber, visaNumber, pool),
-  fetchDuplicatePassenger(agentId, guestEmail, guestPhone, pool),
-]);
+  const [
+    baseline, velocity, agentMeta,
+    cancelRatio, repeatGuest, blacklist, frequentEdits,
+    subAgent, sessionContext, ipReputation, accountFarming,
+    rapidIpSwitch, failedBookings, failedPayments,
+    chargebacks, creditLimit, highRiskNat, docRequirement, duplicatePassenger,
+  ] = await Promise.all([
+    fetchBaseline(agentId, pool),
+    fetchVelocity(agentId, pool),
+    fetchAgentMeta(agentId, pool),
+    fetchCancelRatio(agentId, pool),
+    fetchRepeatGuest(agentId, guestEmail ?? null, pool),
+    fetchBlacklist(guestEmail ?? null, pool),
+    fetchFrequentEdits(bookingId ?? null, pool),
+    fetchSubAgentContext(agentId, pool),
+    fetchSessionContext(agentId, ipAddress, pool),
+    fetchIpReputation(ipAddress, pool),
+    fetchAccountFarming(ipAddress, agentId, pool),
+    fetchRapidIpSwitch(agentId, pool),
+    fetchFailedBookings(agentId, pool),
+    fetchFailedPayments(agentId, pool),
+    fetchChargebacks(agentId, pool),
+    fetchCreditLimit(agentId, pool),
+    fetchHighRiskNat(nationality ?? '', pool),
+    fetchDocRequirement(property.country, passportNumber, visaNumber, pool),
+    fetchDuplicatePassenger(agentId, guestEmail, guestPhone, pool),
+  ]);
 
   return {
     baseline, property, velocity, agentMeta,
@@ -93,7 +88,7 @@ async function fetchBaseline(agentId: string, pool: sql.ConnectionPool): Promise
     starRatingHistory:  safeParseJson(row.star_rating_history, []),
     typicalActiveHours: safeParseJson(row.typical_active_hours, []),
     lookbackDays:       row.lookback_days        ?? 180,
-    avgRoomsPerBooking: row.avg_rooms_per_booking ?? 1.2, 
+    avgRoomsPerBooking: row.avg_rooms_per_booking ?? 1.2,
   };
 }
 
@@ -129,48 +124,6 @@ async function fetchVelocity(agentId: string, pool: sql.ConnectionPool): Promise
   return { bookingsLastHour: result.recordset[0]?.bookings_last_hour ?? 0 };
 }
 
-export async function fetchThresholds(pool: sql.ConnectionPool): Promise<FraudThresholds> {
-  const result = await pool.request()
-    .query(`SELECT signal_type, threshold_value, score_weight FROM dbo.fraud_thresholds`);
-
-  const map: Record<string, number> = {};
-  result.recordset.forEach((r: any) => { map[r.signal_type] = r.threshold_value; });
-
-  const get = (key: string, fallback: number): number => map[key] ?? fallback;
-
-  return {
-    longDuration:    get('long_duration',      DEFAULT_THRESHOLDS.longDuration),
-    extremeDuration: get('extreme_duration',   DEFAULT_THRESHOLDS.extremeDuration),
-    highAmountMult:  get('high_amount_mult',   DEFAULT_THRESHOLDS.highAmountMult),
-    propertyCapMult: get('property_cap_mult',  DEFAULT_THRESHOLDS.propertyCapMult),
-    velocityPerHour: get('velocity_per_hour',  DEFAULT_THRESHOLDS.velocityPerHour),
-    offHoursStart:   get('off_hours_start',    DEFAULT_THRESHOLDS.offHoursStart),
-    offHoursEnd:     get('off_hours_end',      DEFAULT_THRESHOLDS.offHoursEnd),
-    starDropDelta:   get('star_drop_delta',    DEFAULT_THRESHOLDS.starDropDelta),
-    scoreReview:     get('score_review',       DEFAULT_THRESHOLDS.scoreReview),
-    scoreBlock:      get('score_block',        DEFAULT_THRESHOLDS.scoreBlock),
-    scoreSuspend:    get('score_suspend',      DEFAULT_THRESHOLDS.scoreSuspend),
-  };
-}
-
-export async function fetchPermutationRules(pool: sql.ConnectionPool): Promise<PermutationRule[]> {
-  const result = await pool.request()
-    .query(`
-      SELECT rule_id, rule_name, combo_signals, bonus_score, severity, description
-      FROM dbo.fraud_permutation_rules
-      WHERE is_active = 1
-    `);
-
-  return result.recordset.map((r: any) => ({
-    ruleId:       r.rule_id,
-    ruleName:     r.rule_name,
-    comboSignals: safeParseJson<SignalType[]>(r.combo_signals, []),
-    bonusScore:   r.bonus_score,
-    severity:     r.severity as RiskLevel,
-    description:  r.description,
-  }));
-}
-
 async function fetchAgentMeta(agentId: string, pool: sql.ConnectionPool): Promise<AgentMeta> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
@@ -179,14 +132,14 @@ async function fetchAgentMeta(agentId: string, pool: sql.ConnectionPool): Promis
   const row = result.recordset[0];
   if (!row) return { isNewAgent: false, daysSinceCreated: 999, daysSinceUpdated: 999 };
 
-  const now = new Date();
+  const now     = new Date();
   const created = new Date(row.created_at);
   const updated = row.updated_at ? new Date(row.updated_at) : null;
 
   return {
-    isNewAgent:         row.status === 'active' && (now.getTime() - created.getTime()) < 90 * 24 * 60 * 60 * 1000,
-    daysSinceCreated:   Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)),
-    daysSinceUpdated:   updated ? Math.floor((now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24)) : 999,
+    isNewAgent:       row.status === 'active' && (now.getTime() - created.getTime()) < 90 * 24 * 60 * 60 * 1000,
+    daysSinceCreated: Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24)),
+    daysSinceUpdated: updated ? Math.floor((now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24)) : 999,
   };
 }
 
@@ -201,7 +154,7 @@ async function fetchCancelRatio(agentId: string, pool: sql.ConnectionPool): Prom
       WHERE agent_id = @agentId
     `);
 
-  const row = result.recordset[0];
+  const row       = result.recordset[0];
   const total     = row?.total_bookings     ?? 0;
   const cancelled = row?.cancelled_bookings ?? 0;
   const ratio     = total > 0 ? cancelled / total : 0;
@@ -282,10 +235,9 @@ async function fetchSessionContext(
 ): Promise<SessionContext> {
   if (!currentIp) return { concurrentSessionCount: 0, distinctIPs: [], hasConcurrentSessions: false };
 
-  // Upsert current session — mark agent as active from this IP
   await pool.request()
-    .input('agentId',   sql.UniqueIdentifier, agentId)
-    .input('ip',        sql.VarChar(45),       currentIp)
+    .input('agentId', sql.UniqueIdentifier, agentId)
+    .input('ip',      sql.VarChar(45),      currentIp)
     .query(`
       IF EXISTS (
         SELECT 1 FROM dbo.agent_sessions
@@ -303,14 +255,13 @@ async function fetchSessionContext(
         VALUES (@agentId, @ip, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 1)
     `);
 
-  // Fetch all distinct active IPs for this agent in last 30 minutes
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
       SELECT DISTINCT ip_address
       FROM dbo.agent_sessions
-      WHERE agent_id    = @agentId
-        AND is_active   = 1
+      WHERE agent_id     = @agentId
+        AND is_active    = 1
         AND last_seen_at >= DATEADD(MINUTE, -30, SYSDATETIMEOFFSET())
     `);
 
@@ -322,10 +273,8 @@ async function fetchSessionContext(
     hasConcurrentSessions:  ips.length >= 2,
   };
 }
-async function fetchIpReputation(
-  ipAddress: string | null | undefined,
-  pool: sql.ConnectionPool
-): Promise<IpReputationContext> {
+
+async function fetchIpReputation(ipAddress: string | null | undefined, pool: sql.ConnectionPool): Promise<IpReputationContext> {
   if (!ipAddress) return { isBlacklisted: false, reason: null, source: null };
 
   const result = await pool.request()
@@ -343,16 +292,12 @@ async function fetchIpReputation(
   };
 }
 
-async function fetchAccountFarming(
-  ipAddress: string | null | undefined,
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<AccountFarmingContext> {
+async function fetchAccountFarming(ipAddress: string | null | undefined, agentId: string, pool: sql.ConnectionPool): Promise<AccountFarmingContext> {
   if (!ipAddress) return { sameIpAgentCount: 0, isFarming: false };
 
   const result = await pool.request()
-    .input('ip',      sql.VarChar(45),       ipAddress)
-    .input('agentId', sql.UniqueIdentifier,  agentId)
+    .input('ip',      sql.VarChar(45),      ipAddress)
+    .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
       SELECT COUNT(DISTINCT agent_id) AS agent_count
       FROM dbo.agent_sessions
@@ -366,16 +311,13 @@ async function fetchAccountFarming(
   return { sameIpAgentCount: count, isFarming: count >= 5 };
 }
 
-async function fetchRapidIpSwitch(
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<RapidIpSwitchContext> {
+async function fetchRapidIpSwitch(agentId: string, pool: sql.ConnectionPool): Promise<RapidIpSwitchContext> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
       SELECT COUNT(DISTINCT ip_address) AS ip_count
       FROM dbo.agent_sessions
-      WHERE agent_id    = @agentId
+      WHERE agent_id     = @agentId
         AND last_seen_at >= DATEADD(MINUTE, -10, SYSDATETIMEOFFSET())
     `);
 
@@ -383,10 +325,7 @@ async function fetchRapidIpSwitch(
   return { ipSwitchCount: count, isRapidSwitching: count >= 3 };
 }
 
-async function fetchFailedBookings(
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<FailedBookingContext> {
+async function fetchFailedBookings(agentId: string, pool: sql.ConnectionPool): Promise<FailedBookingContext> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
@@ -400,10 +339,7 @@ async function fetchFailedBookings(
   return { failureCount: count, isSuspicious: count >= 3 };
 }
 
-async function fetchFailedPayments(
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<FailedPaymentContext> {
+async function fetchFailedPayments(agentId: string, pool: sql.ConnectionPool): Promise<FailedPaymentContext> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
@@ -417,10 +353,7 @@ async function fetchFailedPayments(
   return { failureCount: count, isSuspicious: count >= 3 };
 }
 
-async function fetchChargebacks(
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<ChargebackContext> {
+async function fetchChargebacks(agentId: string, pool: sql.ConnectionPool): Promise<ChargebackContext> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
@@ -434,10 +367,7 @@ async function fetchChargebacks(
   return { chargebackCount: count, hasChargebacks: count >= 1 };
 }
 
-async function fetchCreditLimit(
-  agentId: string,
-  pool: sql.ConnectionPool
-): Promise<CreditLimitContext> {
+async function fetchCreditLimit(agentId: string, pool: sql.ConnectionPool): Promise<CreditLimitContext> {
   const result = await pool.request()
     .input('agentId', sql.UniqueIdentifier, agentId)
     .query(`
@@ -459,10 +389,8 @@ async function fetchCreditLimit(
     isAtRisk:       usagePct >= (row.credit_warning_pct ?? 80),
   };
 }
-async function fetchHighRiskNat(
-  nationality: string,
-  pool: sql.ConnectionPool
-): Promise<HighRiskNatContext> {
+
+async function fetchHighRiskNat(nationality: string, pool: sql.ConnectionPool): Promise<HighRiskNatContext> {
   const result = await pool.request()
     .input('nat', sql.Char(2), nationality.toUpperCase())
     .query(`
@@ -472,17 +400,14 @@ async function fetchHighRiskNat(
     `);
 
   if (result.recordset.length === 0) return { isHighRisk: false, reason: null };
-  return {
-    isHighRisk: true,
-    reason:     result.recordset[0].risk_reason,
-  };
+  return { isHighRisk: true, reason: result.recordset[0].risk_reason };
 }
 
 async function fetchDocRequirement(
   propertyCountry: string,
   passportNumber:  string | null | undefined,
   visaNumber:      string | null | undefined,
-  pool: sql.ConnectionPool
+  pool:            sql.ConnectionPool,
 ): Promise<DocRequirementContext> {
   const result = await pool.request()
     .input('country', sql.Char(2), propertyCountry.toUpperCase())
@@ -511,24 +436,16 @@ async function fetchDocRequirement(
   if (requiredDoc === 'visa')     isMissing = !hasVisa;
   if (requiredDoc === 'both')     isMissing = !hasPassport || !hasVisa;
 
-  return {
-    requiresDocs:    true,
-    requiredDocType: requiredDoc,
-    hasPassport,
-    hasVisa,
-    isMissing,
-  };
+  return { requiresDocs: true, requiredDocType: requiredDoc, hasPassport, hasVisa, isMissing };
 }
 
 async function fetchDuplicatePassenger(
   agentId:    string,
   guestEmail: string | null | undefined,
   guestPhone: string | null | undefined,
-  pool:       sql.ConnectionPool
+  pool:       sql.ConnectionPool,
 ): Promise<DuplicatePassengerContext> {
-  if (!guestEmail && !guestPhone) {
-    return { duplicateCount: 0, isDuplicate: false };
-  }
+  if (!guestEmail && !guestPhone) return { duplicateCount: 0, isDuplicate: false };
 
   const result = await pool.request()
     .input('agentId',    sql.UniqueIdentifier, agentId)
